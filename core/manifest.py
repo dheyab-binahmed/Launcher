@@ -85,9 +85,11 @@ class Manifest:
         assets = launcher.get("assets")
         if not isinstance(assets, dict):
             _fail("launcher.assets must be an object")
-        parsed_launcher = {key: Artifact.parse(value, f"launcher.assets.{key}") for key, value in assets.items() if key in {"windows", "macos"}}
-        if not parsed_launcher:
-            _fail("launcher.assets needs at least one supported platform")
+        parsed_launcher: dict[str, Artifact] = {}
+        for key, value in assets.items():
+            if key not in {"windows", "macos"}:
+                _fail("launcher.assets contains an unsupported platform")
+            parsed_launcher[key] = Artifact.parse(value, f"launcher.assets.{key}")
         menus_raw = data.get("menus")
         if not isinstance(menus_raw, dict):
             _fail("menus must be an object")

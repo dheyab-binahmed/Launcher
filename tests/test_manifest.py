@@ -23,3 +23,11 @@ def test_invalid_manifest_rejected(mutator):
 def test_unpublished_language_explains_unavailability():
     data = sample(); data["menus"]["ru"] = {"windows": {"available": False}}
     with pytest.raises(ManifestError, match="not published"): Manifest.from_json(json.dumps(data)).menu_for("ru", "windows")
+
+
+def test_shipped_manifest_describes_the_verified_english_windows_release():
+    manifest_path = Path(__file__).parents[1] / "config" / "manifest.json"
+    release = Manifest.from_json(manifest_path.read_text(encoding="utf-8")).menu_for("en", "windows")
+    assert release.version == "b1.0.0"
+    assert release.revision == 1
+    assert [artifact.filename for artifact in release.artifacts] == ["en.menu.b1.0.0_win.exe", "en.menu.b1.0.0_win.pck"]

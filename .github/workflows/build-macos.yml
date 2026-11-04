@@ -11,4 +11,4 @@ jobs:
       - run: python3 -m pytest tests -q
       - run: chmod +x scripts/build_macos.sh && ./scripts/build_macos.sh
       - uses: actions/upload-artifact@v4
-        with: {name: MeluLauncher-macos, path: Launcher/dist/MeluLauncher}
+        with: {name: MeluLauncher-macos, path: dist/MeluLauncher-macos.zip}

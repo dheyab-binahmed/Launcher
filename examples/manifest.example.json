@@ -2,19 +2,16 @@
   "schema_version": 1,
   "launcher": {
     "version": "0.1.0",
-    "assets": {
-      "windows": {"url": "https://github.com/OWNER/REPOSITORY/releases/download/launcher-v0.1.0/MeluLauncher-windows.zip", "filename": "MeluLauncher-windows.zip", "size": 1, "sha256": "REPLACE_WITH_64_HEX_SHA256"},
-      "macos": {"url": "https://github.com/OWNER/REPOSITORY/releases/download/launcher-v0.1.0/MeluLauncher-macos.zip", "filename": "MeluLauncher-macos.zip", "size": 1, "sha256": "REPLACE_WITH_64_HEX_SHA256"}
-    }
+    "assets": {}
   },
   "menus": {
     "en": {
       "windows": {
-        "available": true, "version": "b1.0.0", "revision": 1,
-        "launch_path": "en menu b1.0.0_win.exe",
+        "available": true, "version": "b1.0.0", "revision": 1, "release_tag": "menu-b1.0.0-r1",
+        "launch_path": "en.menu.b1.0.0_win.exe",
         "artifacts": [
-          {"url": "https://github.com/OWNER/REPOSITORY/releases/download/menu-en-b1.0.0-r1/en-menu-b1.0.0-win.exe", "filename": "en menu b1.0.0_win.exe", "size": 103035904, "sha256": "5543ab4b6fb453c5db7f4effa0aad7f1cc06d73c12e8436adfc9fb266ac34ee"},
-          {"url": "https://github.com/OWNER/REPOSITORY/releases/download/menu-en-b1.0.0-r1/en-menu-b1.0.0-win.pck", "filename": "en menu b1.0.0_win.pck", "size": 7730144, "sha256": "94871ff7de5f17aa9ce0896e91d2f5eb7a42dc2f9cf2c5a9fc998b25c5c1a8bc"}
+          {"url": "https://github.com/dheyab-binahmed/Launcher/releases/download/menu-b1.0.0-r1/en.menu.b1.0.0_win.exe", "filename": "en.menu.b1.0.0_win.exe", "size": 103035904, "sha256": "5543ab4b6fb453c5dbe7f4effa0aad7f1cc06d73c12e8436adfc9fb266ac34ee"},
+          {"url": "https://github.com/dheyab-binahmed/Launcher/releases/download/menu-b1.0.0-r1/en.menu.b1.0.0_win.pck", "filename": "en.menu.b1.0.0_win.pck", "size": 7730144, "sha256": "94871ff7de5f17aa9ce0896e91d2f5eb7a42dc2f9cf2c5a9fc998b25c5c1a8bc"}
         ]
       },
       "macos": {"available": false}

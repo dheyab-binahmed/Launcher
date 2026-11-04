@@ -11,6 +11,7 @@ TEXT = {
         "network_error": "Could not reach the release service. Check your internet connection and try again.",
         "download_error": "The download could not be completed. Please check your connection and try again.",
         "integrity_error": "The downloaded file did not pass its security check. It was not opened.",
+        "updating": "A launcher update is ready. Restarting…",
     },
     "ru": {
         "title": "Лаунчер", "subtitle": "ИГРОВОЙ ЛАУНЧЕР", "interface_language": "ЯЗЫК ИНТЕРФЕЙСА ЛАУНЧЕРА",
@@ -22,5 +23,6 @@ TEXT = {
         "network_error": "Не удалось связаться со службой релизов. Проверьте подключение к интернету и повторите попытку.",
         "download_error": "Не удалось завершить загрузку. Проверьте подключение и повторите попытку.",
         "integrity_error": "Загруженный файл не прошёл проверку безопасности и не был открыт.",
+        "updating": "Обновление лаунчера готово. Перезапуск…",
     },
 }

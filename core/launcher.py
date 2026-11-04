@@ -53,15 +53,25 @@ class MenuService:
         extracted = safe_child(root, "app")
         executable = safe_child(extracted, release.launch_path or "")
         if not executable.exists():
+            # A failed or interrupted extraction is discarded before retrying.
+            # Extract to a sibling directory first, then atomically publish it.
+            staging = safe_child(root, "app.staging")
+            if staging.exists():
+                import shutil
+                shutil.rmtree(staging)
             try:
                 with zipfile.ZipFile(archive) as bundle:
                     for member in bundle.infolist():
-                        target = safe_child(extracted, member.filename)
+                        target = safe_child(staging, member.filename)
                         if member.is_dir(): target.mkdir(parents=True, exist_ok=True)
                         else:
                             target.parent.mkdir(parents=True, exist_ok=True)
                             with bundle.open(member) as src, target.open("wb") as dst: dst.write(src.read())
+                staging.replace(extracted)
             except (OSError, zipfile.BadZipFile) as error:
+                if staging.exists():
+                    import shutil
+                    shutil.rmtree(staging)
                 raise InstallError("The macOS menu archive could not be installed.") from error
         if not executable.is_file():
             raise InstallError("The macOS archive does not contain its declared launch file.")

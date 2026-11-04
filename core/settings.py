@@ -19,7 +19,13 @@ class Settings:
     def load(self) -> None:
         try:
             loaded = json.loads(self.path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict): self.data.update(loaded)
+            if isinstance(loaded, dict):
+                # Older builds persisted an empty placeholder manifest URL. Do
+                # not let it disable the verified bundled default after an
+                # upgrade; a non-empty user URL is still respected.
+                if not str(loaded.get("manifest_url", "")).strip():
+                    loaded = {key: value for key, value in loaded.items() if key != "manifest_url"}
+                self.data.update(loaded)
         except (OSError, json.JSONDecodeError):
             pass
 

@@ -47,7 +47,7 @@ class DownloadManager:
                 verify_file(partial, artifact.size, artifact.sha256)
                 partial.replace(destination)
                 return destination
-            except (OSError, urllib.error.URLError, TimeoutError, Exception) as error:
+            except Exception as error:
                 partial.unlink(missing_ok=True)
                 if attempt == self.retries - 1:
                     if isinstance(error, Exception) and error.__class__.__name__ in {"VerificationError"}:

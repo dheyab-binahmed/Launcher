@@ -11,6 +11,9 @@
 * Unpublished-language, network, malformed manifest, missing file, and integrity failures are shown as player-safe errors.
 * Chapter availability filtering without invented chapter executable names.
 * Windows PyInstaller onedir package built and process-start smoke-tested.
+* Added a checked-in stable manifest for the published `menu-b1.0.0-r1` English Windows assets, using their independently verified names, sizes, and hashes.
+* Added verified launcher-update detection and a post-exit Windows/macOS replacement handoff. It remains dormant until a real launcher ZIP is published in the manifest.
+* Build scripts now create distributable ZIP archives; CI uploads those archives.
 
 ## Automated test result
 
@@ -20,5 +23,5 @@
 
 * Public GitHub repository, stable HTTPS manifest URL, and immutable release assets.
 * Real Russian, macOS, and chapter files with launch paths, hashes, and sizes.
-* Full in-place self-replacement is staged by `core/updater.py`, but is not enabled in the UI until the final launcher release archive format and target installation policy are approved. This prevents replacing a running Windows EXE or a signed macOS bundle unsafely.
+* The first launcher release assets (ZIP URL, byte size, and SHA-256) have not yet been published, so automatic launcher replacement cannot be exercised against a live release.
 * macOS packaging/runtime testing requires GitHub Actions and a real Mac respectively; neither has been claimed as performed locally.
