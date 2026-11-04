@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -21,11 +22,17 @@ def is_newer(candidate: str, current: str) -> bool:
     return tokens(candidate) > tokens(current)
 
 
-class LauncherUpdater:
-    """Safely stage and hand off a verified onedir launcher update.
+def _powershell_string(value: Path | str) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
 
-    Replacement happens in a short-lived helper after this process exits; this
-    class never overwrites the executable currently in use.
+
+class LauncherUpdater:
+    """Install a verified launcher ZIP only after the running app has exited.
+
+    The downloader validates size and SHA-256 before this class receives an
+    archive. The platform helper then waits for this PID, moves the old app to
+    a sibling ``.previous`` backup, moves the complete new app into place, and
+    starts it. A move/start failure restores that backup.
     """
     def __init__(self, downloader: DownloadManager | None = None) -> None:
         self.downloader = downloader or DownloadManager()
@@ -46,68 +53,95 @@ class LauncherUpdater:
         else:
             self._apply_macos(archive)
 
+    def _extract_windows_archive(self, archive: Path, staging: Path) -> Path:
+        """Safely unpack the exact onedir ZIP emitted by build_windows.ps1."""
+        try:
+            with zipfile.ZipFile(archive) as bundle:
+                for item in bundle.infolist():
+                    target = safe_child(staging, item.filename)
+                    if item.is_dir():
+                        target.mkdir(parents=True, exist_ok=True)
+                    else:
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        with bundle.open(item) as src, target.open("wb") as dst:
+                            while chunk := src.read(1024 * 1024):
+                                dst.write(chunk)
+        except (OSError, zipfile.BadZipFile, ValueError) as error:
+            raise InstallError("The launcher update archive is invalid.") from error
+        candidates = list(staging.rglob("MeluLauncher.exe"))
+        if len(candidates) != 1 or not (candidates[0].parent / "_internal").is_dir():
+            raise InstallError("The launcher update archive is not a complete MeluLauncher onedir package.")
+        return candidates[0].parent
+
     def _apply_windows(self, archive: Path) -> None:
         current = Path(sys.executable).resolve().parent
         staging = Path(tempfile.mkdtemp(prefix="melu-launcher-update-", dir=app_temp_root()))
-        try:
-            with zipfile.ZipFile(archive) as bundle:
-                for item in bundle.infolist():
-                    target = safe_child(staging, item.filename)
-                    if item.is_dir():
-                        target.mkdir(parents=True, exist_ok=True)
-                    else:
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        with bundle.open(item) as src, target.open("wb") as dst:
-                            dst.write(src.read())
-        except (OSError, zipfile.BadZipFile) as error:
-            raise InstallError("The launcher update archive is invalid.") from error
-        candidates = list(staging.rglob("MeluLauncher.exe"))
-        if len(candidates) != 1:
-            raise InstallError("The launcher update archive has an invalid layout.")
-        new_root = candidates[0].parent
-        script = staging / "replace-launcher.cmd"
+        new_root = self._extract_windows_archive(archive, staging)
+        script = staging / "replace-launcher.ps1"
+        self._write_windows_helper(script, current, new_root, os.getpid())
+        subprocess.Popen(
+            ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script)],
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+
+    @staticmethod
+    def _write_windows_helper(script: Path, current: Path, new_root: Path, pid: int) -> None:
+        backup = current.with_name(f"{current.name}.previous-{pid}")
+        executable = current / "MeluLauncher.exe"
         script.write_text(textwrap.dedent(f"""\
-            @echo off
-            ping 127.0.0.1 -n 3 > nul
-            set \"old={current}\"
-            set \"new={new_root}\"
-            set \"backup={current}.previous\"
-            if exist \"%backup%\" rmdir /s /q \"%backup%\"
-            move \"%old%\" \"%backup%\" || exit /b 1
-            move \"%new%\" \"%old%\" || (move \"%backup%\" \"%old%\" & exit /b 1)
-            start \"\" \"%old%\\MeluLauncher.exe\"
-            rmdir /s /q \"%backup%\"
+            $ErrorActionPreference = 'Stop'
+            $old = {_powershell_string(current)}
+            $new = {_powershell_string(new_root)}
+            $backup = {_powershell_string(backup)}
+            $executable = {_powershell_string(executable)}
+            Wait-Process -Id {pid} -ErrorAction SilentlyContinue
+            Move-Item -LiteralPath $old -Destination $backup
+            try {{
+                Move-Item -LiteralPath $new -Destination $old
+                Start-Process -FilePath $executable -ErrorAction Stop
+            }} catch {{
+                if (Test-Path -LiteralPath $old) {{ Remove-Item -LiteralPath $old -Recurse -Force }}
+                Move-Item -LiteralPath $backup -Destination $old
+                throw
+            }}
         """), encoding="utf-8")
-        subprocess.Popen(["cmd", "/c", str(script)], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
     def _apply_macos(self, archive: Path) -> None:
+        # Python's zip extraction loses executable modes and app-bundle
+        # metadata. The helper therefore uses ditto after this process exits.
         app = Path(sys.executable).resolve().parents[2]
-        staging = Path(tempfile.mkdtemp(prefix="melu-launcher-update-", dir=app_temp_root()))
-        try:
-            with zipfile.ZipFile(archive) as bundle:
-                for item in bundle.infolist():
-                    target = safe_child(staging, item.filename)
-                    if item.is_dir():
-                        target.mkdir(parents=True, exist_ok=True)
-                    else:
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        with bundle.open(item) as src, target.open("wb") as dst:
-                            dst.write(src.read())
-        except (OSError, zipfile.BadZipFile) as error:
-            raise InstallError("The launcher update archive is invalid.") from error
-        candidates = list(staging.rglob("MeluLauncher.app"))
-        if len(candidates) != 1:
-            raise InstallError("The launcher update archive has an invalid layout.")
-        new_app = candidates[0]
-        script = staging / "replace-launcher.sh"
-        script.write_text(textwrap.dedent(f"""\
-            #!/bin/sh
-            sleep 2
-            old={str(app)!r}
-            new={str(new_app)!r}
-            backup="$old.previous"
-            rm -rf "$backup"
-            mv "$old" "$backup" && mv "$new" "$old" && open "$old" || mv "$backup" "$old"
-        """), encoding="utf-8")
+        root = Path(tempfile.mkdtemp(prefix="melu-launcher-update-", dir=app_temp_root()))
+        script = root / "replace-launcher.sh"
+        self._write_macos_helper(script, app, archive, os.getpid())
         script.chmod(0o700)
         subprocess.Popen(["/bin/sh", str(script)], start_new_session=True)
+
+    @staticmethod
+    def _write_macos_helper(script: Path, app: Path, archive: Path, pid: int) -> None:
+        parent = app.parent
+        backup = app.with_name(f"{app.name}.previous-{pid}")
+        extract = parent / f".{app.stem}.extract-{pid}"
+        new_app = parent / f".{app.stem}.update-{pid}.app"
+        script.write_text(textwrap.dedent(f"""\
+            #!/bin/sh
+            set -eu
+            old={shlex.quote(str(app))}
+            archive={shlex.quote(str(archive))}
+            backup={shlex.quote(str(backup))}
+            extract={shlex.quote(str(extract))}
+            new={shlex.quote(str(new_app))}
+            while kill -0 {pid} 2>/dev/null; do sleep 1; done
+            mkdir "$extract"
+            /usr/bin/ditto -x -k "$archive" "$extract"
+            candidate="$extract/MeluLauncher.app"
+            test -x "$candidate/Contents/MacOS/MeluLauncher"
+            mv "$candidate" "$new"
+            rmdir "$extract"
+            mv "$old" "$backup"
+            if mv "$new" "$old" && open "$old"; then
+                exit 0
+            fi
+            rm -rf "$old"
+            mv "$backup" "$old"
+            exit 1
+        """), encoding="utf-8")

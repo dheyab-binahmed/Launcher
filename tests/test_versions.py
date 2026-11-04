@@ -1,5 +1,10 @@
 import json
+import zipfile
+from pathlib import Path
 
+import pytest
+
+from core.errors import InstallError
 from core.manifest import Manifest
 from core.updater import LauncherUpdater, is_newer
 
@@ -14,3 +19,47 @@ def test_updater_ignores_manifest_without_a_published_launcher_asset(monkeypatch
     data = {"schema_version": 1, "launcher": {"version": "9.0.0", "assets": {}}, "menus": {}}
     monkeypatch.setattr("core.updater.platform_key", lambda: "windows")
     assert LauncherUpdater().available(Manifest.from_json(json.dumps(data)), "0.1.0") is None
+
+
+def test_windows_updater_accepts_the_actual_onedir_zip_layout(tmp_path: Path):
+    archive = tmp_path / "MeluLauncher-windows.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("MeluLauncher/MeluLauncher.exe", b"launcher")
+        bundle.writestr("MeluLauncher/_internal/python.dll", b"runtime")
+    root = LauncherUpdater()._extract_windows_archive(archive, tmp_path / "staging")
+    assert root.name == "MeluLauncher"
+    assert (root / "MeluLauncher.exe").is_file()
+
+
+def test_windows_updater_rejects_incomplete_or_unsafe_archives(tmp_path: Path):
+    incomplete = tmp_path / "incomplete.zip"
+    with zipfile.ZipFile(incomplete, "w") as bundle:
+        bundle.writestr("MeluLauncher/MeluLauncher.exe", b"launcher")
+    with pytest.raises(InstallError, match="complete"):
+        LauncherUpdater()._extract_windows_archive(incomplete, tmp_path / "incomplete")
+
+    unsafe = tmp_path / "unsafe.zip"
+    with zipfile.ZipFile(unsafe, "w") as bundle:
+        bundle.writestr("../MeluLauncher.exe", b"bad")
+    with pytest.raises(InstallError, match="invalid"):
+        LauncherUpdater()._extract_windows_archive(unsafe, tmp_path / "unsafe")
+
+
+def test_windows_helper_waits_for_exit_and_restores_on_failure(tmp_path: Path):
+    script = tmp_path / "replace.ps1"
+    LauncherUpdater._write_windows_helper(script, tmp_path / "old", tmp_path / "new", 1234)
+    contents = script.read_text(encoding="utf-8")
+    assert "Wait-Process -Id 1234" in contents
+    assert "Move-Item -LiteralPath $old -Destination $backup" in contents
+    assert "Move-Item -LiteralPath $backup -Destination $old" in contents
+    assert "Start-Process -FilePath $executable" in contents
+
+
+def test_macos_helper_preserves_bundle_metadata_and_has_recovery(tmp_path: Path):
+    script = tmp_path / "replace.sh"
+    LauncherUpdater._write_macos_helper(script, Path("/Applications/MeluLauncher.app"), tmp_path / "update.zip", 99)
+    contents = script.read_text(encoding="utf-8")
+    assert "/usr/bin/ditto -x -k" in contents
+    assert "while kill -0 99" in contents
+    assert "test -x \"$candidate/Contents/MacOS/MeluLauncher\"" in contents
+    assert 'mv "$backup" "$old"' in contents

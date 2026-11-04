@@ -22,7 +22,15 @@ The onedir executable will be at `dist\MeluLauncher\MeluLauncher.exe`. Do not mo
 4. Build the launcher archive, calculate its exact byte count and SHA-256, upload it to an immutable GitHub Release, then add its URL, filename, size, and hash under `launcher.assets.windows` (and/or `macos`). Commit the manifest change to `main`; the shipped launcher reads it from the stable `raw.githubusercontent.com` URL configured in `config/settings.json`.
 5. For a menu replacement that retains visible version `b1.0.0`, increment `revision`, publish new immutable assets, and change their size/hash/URLs in the manifest. The launcher detects revision and hash changes.
 
-Russian entries are deliberately marked unavailable; no Russian game files were invented. Mark an entry available only after its real executable/archive, exact launch path, size, and SHA-256 are supplied. Launcher updates are applied only from verified ZIP assets and are handed to a helper after the running launcher exits, so a running executable is never overwritten.
+Russian entries are deliberately marked unavailable; no Russian game files were invented. Mark an entry available only after its real executable/archive, exact launch path, size, and SHA-256 are supplied.
+
+## Launcher updates
+
+At startup, the launcher checks the manifest in a background worker. If `launcher.version` is newer and contains an asset for the current platform, it downloads the HTTPS ZIP through the normal `.part` download path, verifies its exact size and SHA-256, and then asks the UI to close.
+
+The replacement helper waits for the old process to exit before changing files. On Windows it validates and extracts the `MeluLauncher/` PyInstaller onedir ZIP (including `_internal`), moves the old installation to a uniquely named sibling backup, moves in the new directory, and starts `MeluLauncher.exe`. If moving or starting fails, it restores the backup. On macOS the helper uses `/usr/bin/ditto` after exit so the downloaded `.app` retains executable permissions and bundle metadata; it validates the app executable before replacing the old bundle and restores the backup on failure.
+
+The helper retains the backup after a successful handoff so a failed update remains recoverable. This code path is connected to the UI, but it will remain dormant until a real launcher ZIP and its immutable URL, byte size, and SHA-256 are placed in the manifest. It has not yet been exercised against a published launcher release or on a physical Mac.
 
 ## Manifest rules
 
