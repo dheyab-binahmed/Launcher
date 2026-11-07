@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from pathlib import PurePosixPath
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any
 from urllib.parse import urlparse
 
 from .errors import ManifestError
 
 HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
+VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 def _fail(message: str) -> None:
@@ -44,7 +45,8 @@ class Artifact:
         size = data.get("size")
         checksum = data.get("sha256")
         filename = _string(data.get("filename"), f"{field}.filename")
-        if PurePosixPath(filename).name != filename or filename in {".", ".."}:
+        if (PurePosixPath(filename).name != filename or PureWindowsPath(filename).name != filename
+                or filename in {".", ".."} or "\x00" in filename):
             _fail(f"{field}.filename must not contain a path")
         if not isinstance(size, int) or size < 1:
             _fail(f"{field}.size must be a positive integer")
@@ -85,9 +87,11 @@ class Manifest:
         assets = launcher.get("assets")
         if not isinstance(assets, dict):
             _fail("launcher.assets must be an object")
-        parsed_launcher = {key: Artifact.parse(value, f"launcher.assets.{key}") for key, value in assets.items() if key in {"windows", "macos"}}
-        if not parsed_launcher:
-            _fail("launcher.assets needs at least one supported platform")
+        parsed_launcher: dict[str, Artifact] = {}
+        for key, value in assets.items():
+            if key not in {"windows", "macos"}:
+                _fail("launcher.assets contains an unsupported platform")
+            parsed_launcher[key] = Artifact.parse(value, f"launcher.assets.{key}")
         menus_raw = data.get("menus")
         if not isinstance(menus_raw, dict):
             _fail("menus must be an object")
@@ -110,16 +114,24 @@ class Manifest:
                 launch_path = _string(release.get("launch_path"), "menu.launch_path")
                 if not isinstance(revision, int) or revision < 1 or not isinstance(artifact_data, list) or not artifact_data:
                     _fail("available menu needs a positive revision and artifacts")
-                if PurePosixPath(launch_path).is_absolute() or ".." in PurePosixPath(launch_path).parts:
+                posix_path, windows_path = PurePosixPath(launch_path), PureWindowsPath(launch_path)
+                if ("\x00" in launch_path or posix_path.is_absolute() or windows_path.is_absolute()
+                        or ".." in posix_path.parts or ".." in windows_path.parts):
                     _fail("menu.launch_path is unsafe")
                 parsed = tuple(Artifact.parse(item, "menu.artifacts") for item in artifact_data)
                 if platform_name == "windows" and len(parsed) < 2:
                     _fail("Windows menu needs EXE and PCK artifacts")
-                menus[language][platform_name] = MenuRelease(language, True, _string(release.get("version"), "menu.version"), revision, parsed, launch_path)
+                version = _string(release.get("version"), "menu.version")
+                if not VERSION.fullmatch(version):
+                    _fail("menu.version contains unsafe characters")
+                menus[language][platform_name] = MenuRelease(language, True, version, revision, parsed, launch_path)
         chapters = data.get("chapters", [])
         if not isinstance(chapters, list):
             _fail("chapters must be a list")
-        return cls(1, _string(launcher.get("version"), "launcher.version"), parsed_launcher, menus, chapters)
+        launcher_version = _string(launcher.get("version"), "launcher.version")
+        if not VERSION.fullmatch(launcher_version):
+            _fail("launcher.version contains unsafe characters")
+        return cls(1, launcher_version, parsed_launcher, menus, chapters)
 
     def menu_for(self, language: str, platform: str) -> MenuRelease:
         release = self.menus.get(language, {}).get(platform)

@@ -14,7 +14,7 @@ def test_manifest_parses_and_selects_release():
     assert (result.version, result.revision, len(result.artifacts)) == ("b1", 2, 2)
 
 
-@pytest.mark.parametrize("mutator", [lambda d: d.update(schema_version=2), lambda d: d["menus"]["en"]["windows"].update(launch_path="../menu.exe"), lambda d: d["launcher"]["assets"]["windows"].update(url="http://bad")])
+@pytest.mark.parametrize("mutator", [lambda d: d.update(schema_version=2), lambda d: d["menus"]["en"]["windows"].update(launch_path="../menu.exe"), lambda d: d["menus"]["en"]["windows"].update(launch_path="C:\\menu.exe"), lambda d: d["menus"]["en"]["windows"].update(version="b1/unsafe"), lambda d: d["launcher"]["assets"]["windows"].update(filename="..\\launcher.zip"), lambda d: d["launcher"]["assets"]["windows"].update(url="http://bad")])
 def test_invalid_manifest_rejected(mutator):
     data = sample(); mutator(data)
     with pytest.raises(ManifestError): Manifest.from_json(json.dumps(data))
@@ -23,3 +23,22 @@ def test_invalid_manifest_rejected(mutator):
 def test_unpublished_language_explains_unavailability():
     data = sample(); data["menus"]["ru"] = {"windows": {"available": False}}
     with pytest.raises(ManifestError, match="not published"): Manifest.from_json(json.dumps(data)).menu_for("ru", "windows")
+
+
+def test_shipped_manifest_describes_the_verified_english_windows_release():
+    manifest_path = Path(__file__).parents[1] / "config" / "manifest.json"
+    release = Manifest.from_json(manifest_path.read_text(encoding="utf-8")).menu_for("en", "windows")
+    assert release.version == "b1.0.0"
+    assert release.revision == 1
+    assert [artifact.filename for artifact in release.artifacts] == ["en.menu.b1.0.0_win.exe", "en.menu.b1.0.0_win.pck"]
+
+
+def test_production_build_configuration_is_not_a_testing_override():
+    root = Path(__file__).resolve().parents[1]
+    settings = json.loads((root / "config" / "settings.json").read_text(encoding="utf-8"))
+    script = (root / "scripts" / "build_windows.ps1").read_text(encoding="utf-8")
+    spec = (root / "MeluLauncher.spec").read_text(encoding="utf-8")
+    assert settings["manifest_url"] == "https://raw.githubusercontent.com/dheyab-binahmed/Launcher/main/config/manifest.json"
+    assert "--specpath build" in script
+    assert "Resolve-Path -LiteralPath $configSource" in script
+    assert "datas=[('config', 'config')]" in spec

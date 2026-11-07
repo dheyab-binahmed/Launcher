@@ -6,7 +6,16 @@ class ManifestError(LauncherError):
     pass
 
 
+class ManifestUnavailableError(LauncherError):
+    """The release manifest itself could not be retrieved."""
+    pass
+
+
 class DownloadError(LauncherError):
+    pass
+
+
+class ArchiveError(LauncherError):
     pass
 
 

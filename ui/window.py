@@ -2,21 +2,47 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QThread, Signal, Qt
+from PySide6.QtCore import QObject, QThread, Signal, Qt, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication, QButtonGroup, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QProgressBar, QPushButton, QVBoxLayout, QWidget
 
 from core.launcher import MenuService
 from core.settings import Settings
+from core.updater import LauncherUpdater
 from ui.language import TEXT
 
 LAUNCHER_VERSION = "0.1.0"
+
+
+def player_error(message: str, text: dict[str, str]) -> str:
+    """Map known safe service failures to a precise player-facing message."""
+    lower = message.lower()
+    if "invalid json" in lower or "invalid manifest" in lower:
+        return text["manifest_invalid"]
+    if "not published" in lower:
+        return text["release_unavailable"]
+    if "release manifest" in lower or "manifest is unavailable" in lower:
+        return text["manifest_unavailable"]
+    if "size check" in lower:
+        return text["size_error"]
+    if "sha-256" in lower or "integrity" in lower:
+        return text["sha_error"]
+    if "timed out" in lower:
+        return text["timeout_error"]
+    if "not enough disk space" in lower or "not enough space" in lower or "no space left" in lower:
+        return text["disk_error"]
+    if "download" in lower:
+        return text["download_error"]
+    if "install" in lower or "archive" in lower or "launch file" in lower:
+        return text["install_error"]
+    return message
 
 
 class Worker(QObject):
     status = Signal(str)
     progress = Signal(int, int)
     completed = Signal(str, int)
+    update_ready = Signal(str)
     failed = Signal(str)
 
     def __init__(self, url: str, language: str) -> None:
@@ -25,10 +51,41 @@ class Worker(QObject):
 
     def run(self) -> None:
         try:
-            manifest, _ = MenuService().prepare_and_launch(self.url, self.language, self.progress.emit, self.status.emit)
+            service = MenuService()
+            manifest = service.manifest(self.url)
+            updater = LauncherUpdater()
+            artifact = updater.available(manifest, LAUNCHER_VERSION)
+            if artifact:
+                self.status.emit("Downloading launcher update…")
+                self.update_ready.emit(str(updater.stage(artifact)))
+                return
             from core.platform_utils import platform_key
             release = manifest.menu_for(self.language, platform_key())
+            executable = service.install(release, platform_key(), self.progress.emit, self.status.emit)
+            service.launch(executable, platform_key())
             self.completed.emit(release.version or "", release.revision or 0)
+        except Exception as error:
+            self.failed.emit(str(error))
+
+
+class UpdateCheckWorker(QObject):
+    """Fetches only the small manifest at startup; it never starts a game."""
+    update_ready = Signal(str)
+    no_update = Signal()
+    failed = Signal(str)
+
+    def __init__(self, url: str) -> None:
+        super().__init__()
+        self.url = url
+
+    def run(self) -> None:
+        try:
+            manifest = MenuService().manifest(self.url)
+            artifact = LauncherUpdater().available(manifest, LAUNCHER_VERSION)
+            if artifact:
+                self.update_ready.emit(str(LauncherUpdater().stage(artifact)))
+            else:
+                self.no_update.emit()
         except Exception as error:
             self.failed.emit(str(error))
 
@@ -44,6 +101,8 @@ class LauncherWindow(QMainWindow):
         self.resize(760, 650)
         self._build()
         self._refresh()
+        if self._has_manifest():
+            QTimer.singleShot(0, self._check_for_update)
 
     def _build(self) -> None:
         root = QWidget(); root.setObjectName("root"); self.setCentralWidget(root)
@@ -126,9 +185,34 @@ class LauncherWindow(QMainWindow):
         self.thread = QThread(self); self.worker = Worker(self.settings.data["manifest_url"], self.settings.language)
         self.worker.moveToThread(self.thread); self.thread.started.connect(self.worker.run)
         self.worker.status.connect(self.status.setText); self.worker.progress.connect(self._update_progress)
+        self.worker.update_ready.connect(self._install_update)
         self.worker.completed.connect(self._done); self.worker.failed.connect(self._failed)
         self.worker.completed.connect(self.thread.quit); self.worker.failed.connect(self.thread.quit)
+        self.worker.update_ready.connect(self.thread.quit)
         self.thread.finished.connect(lambda: self.play.setEnabled(True)); self.thread.start()
+
+    def _check_for_update(self) -> None:
+        self.update_thread = QThread(self)
+        self.update_worker = UpdateCheckWorker(self.settings.data["manifest_url"])
+        self.update_worker.moveToThread(self.update_thread)
+        self.update_thread.started.connect(self.update_worker.run)
+        self.update_worker.update_ready.connect(self._install_update)
+        self.update_worker.no_update.connect(lambda: self.status.setText(TEXT[self.ui_language]["ready"]))
+        # A background update check must not block the player from starting a
+        # cached or otherwise available menu.
+        self.update_worker.failed.connect(lambda _message: None)
+        self.update_worker.update_ready.connect(self.update_thread.quit)
+        self.update_worker.no_update.connect(self.update_thread.quit)
+        self.update_worker.failed.connect(self.update_thread.quit)
+        self.update_thread.start()
+
+    def _install_update(self, archive: str) -> None:
+        try:
+            self.status.setText(TEXT[self.ui_language]["updating"])
+            LauncherUpdater().apply_and_restart(Path(archive))
+            QApplication.quit()
+        except Exception as error:
+            self._failed(str(error))
 
     def _update_progress(self, value: int, total: int) -> None:
         self.progress.setValue(int(value * 100 / total) if total else 0)
@@ -137,10 +221,8 @@ class LauncherWindow(QMainWindow):
         self.status.setText(TEXT[self.ui_language]["started"].format(version=version, revision=revision)); self.progress.setValue(100)
 
     def _failed(self, message: str) -> None:
-        text = TEXT[self.ui_language]; lower = message.lower()
-        if "integrity" in lower or "sha-256" in lower or "size check" in lower: message = text["integrity_error"]
-        elif "download" in lower: message = text["download_error"]
-        elif "internet" in lower or "retrieve" in lower: message = text["network_error"]
+        text = TEXT[self.ui_language]
+        message = player_error(message, text)
         self.status.setText(message); QMessageBox.warning(self, text["error_title"], message)
 
 
