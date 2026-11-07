@@ -14,6 +14,30 @@ from ui.language import TEXT
 LAUNCHER_VERSION = "0.1.0"
 
 
+def player_error(message: str, text: dict[str, str]) -> str:
+    """Map known safe service failures to a precise player-facing message."""
+    lower = message.lower()
+    if "invalid json" in lower or "invalid manifest" in lower:
+        return text["manifest_invalid"]
+    if "not published" in lower:
+        return text["release_unavailable"]
+    if "release manifest" in lower or "manifest is unavailable" in lower:
+        return text["manifest_unavailable"]
+    if "size check" in lower:
+        return text["size_error"]
+    if "sha-256" in lower or "integrity" in lower:
+        return text["sha_error"]
+    if "timed out" in lower:
+        return text["timeout_error"]
+    if "not enough disk space" in lower or "not enough space" in lower or "no space left" in lower:
+        return text["disk_error"]
+    if "download" in lower:
+        return text["download_error"]
+    if "install" in lower or "archive" in lower or "launch file" in lower:
+        return text["install_error"]
+    return message
+
+
 class Worker(QObject):
     status = Signal(str)
     progress = Signal(int, int)
@@ -197,10 +221,8 @@ class LauncherWindow(QMainWindow):
         self.status.setText(TEXT[self.ui_language]["started"].format(version=version, revision=revision)); self.progress.setValue(100)
 
     def _failed(self, message: str) -> None:
-        text = TEXT[self.ui_language]; lower = message.lower()
-        if "integrity" in lower or "sha-256" in lower or "size check" in lower: message = text["integrity_error"]
-        elif "download" in lower: message = text["download_error"]
-        elif "internet" in lower or "retrieve" in lower: message = text["network_error"]
+        text = TEXT[self.ui_language]
+        message = player_error(message, text)
         self.status.setText(message); QMessageBox.warning(self, text["error_title"], message)
 
 

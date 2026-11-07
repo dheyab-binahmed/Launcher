@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import os
 import subprocess
-import zipfile
 from pathlib import Path
 from typing import Callable
 
 from .downloader import DownloadManager
-from .errors import InstallError
+from .archive import extract_zip_safely
+from .errors import ArchiveError, InstallError
 from .manifest import Manifest, MenuRelease
 from .platform_utils import app_temp_root, platform_key, safe_child
 from .verifier import verify_file
@@ -60,15 +60,9 @@ class MenuService:
                 import shutil
                 shutil.rmtree(staging)
             try:
-                with zipfile.ZipFile(archive) as bundle:
-                    for member in bundle.infolist():
-                        target = safe_child(staging, member.filename)
-                        if member.is_dir(): target.mkdir(parents=True, exist_ok=True)
-                        else:
-                            target.parent.mkdir(parents=True, exist_ok=True)
-                            with bundle.open(member) as src, target.open("wb") as dst: dst.write(src.read())
+                extract_zip_safely(archive, staging)
                 staging.replace(extracted)
-            except (OSError, zipfile.BadZipFile) as error:
+            except (ArchiveError, OSError) as error:
                 if staging.exists():
                     import shutil
                     shutil.rmtree(staging)

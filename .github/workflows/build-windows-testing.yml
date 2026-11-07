@@ -1,0 +1,22 @@
+name: Build Windows testing launcher
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-and-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: python -m pip install -r requirements.txt pytest
+      - run: python -m pytest tests -q
+      - shell: pwsh
+        run: >-
+          ./scripts/build_windows.ps1
+          -ManifestUrl 'https://raw.githubusercontent.com/dheyab-binahmed/Launcher/codex/complete-windows-launcher/config/manifest.json'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MeluLauncher-windows-testing
+          path: dist/MeluLauncher-windows.zip

@@ -6,11 +6,11 @@ import subprocess
 import sys
 import tempfile
 import textwrap
-import zipfile
 from pathlib import Path
 
 from .downloader import DownloadManager
-from .errors import InstallError
+from .archive import extract_zip_safely
+from .errors import ArchiveError, InstallError
 from .manifest import Artifact, Manifest
 from .platform_utils import app_temp_root, platform_key, safe_child
 
@@ -56,17 +56,8 @@ class LauncherUpdater:
     def _extract_windows_archive(self, archive: Path, staging: Path) -> Path:
         """Safely unpack the exact onedir ZIP emitted by build_windows.ps1."""
         try:
-            with zipfile.ZipFile(archive) as bundle:
-                for item in bundle.infolist():
-                    target = safe_child(staging, item.filename)
-                    if item.is_dir():
-                        target.mkdir(parents=True, exist_ok=True)
-                    else:
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        with bundle.open(item) as src, target.open("wb") as dst:
-                            while chunk := src.read(1024 * 1024):
-                                dst.write(chunk)
-        except (OSError, zipfile.BadZipFile, ValueError) as error:
+            extract_zip_safely(archive, staging)
+        except ArchiveError as error:
             raise InstallError("The launcher update archive is invalid.") from error
         candidates = list(staging.rglob("MeluLauncher.exe"))
         if len(candidates) != 1 or not (candidates[0].parent / "_internal").is_dir():
@@ -98,11 +89,24 @@ class LauncherUpdater:
             Move-Item -LiteralPath $old -Destination $backup
             try {{
                 Move-Item -LiteralPath $new -Destination $old
-                Start-Process -FilePath $executable -ErrorAction Stop
+                # Starting a process only proves CreateProcess succeeded.  Retain
+                # the backup until the replacement has remained alive briefly,
+                # so a launcher which exits immediately is recovered too.
+                $started = Start-Process -FilePath $executable -PassThru -ErrorAction Stop
+                Start-Sleep -Milliseconds 750
+                if ($started.HasExited) {{ throw 'Replacement launcher exited during startup.' }}
+                # Only discard the previous installation after the new process
+                # has survived its startup check.
+                Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction Stop
             }} catch {{
                 if (Test-Path -LiteralPath $old) {{ Remove-Item -LiteralPath $old -Recurse -Force }}
                 Move-Item -LiteralPath $backup -Destination $old
                 throw
+            }} finally {{
+                # The staged launcher has either been moved into place or
+                # discarded during rollback.  Only this helper's own staging
+                # directory remains, so it can be safely removed.
+                Remove-Item -LiteralPath $PSScriptRoot -Recurse -Force -ErrorAction SilentlyContinue
             }}
         """), encoding="utf-8")
 

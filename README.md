@@ -4,15 +4,24 @@ The original beta files remain untouched in the parent `menu` folder. This proje
 
 ## Development and Windows build
 
-This computer has Python 3.11 installed; the release workflows use the required Python 3.12. Install Python 3.12 locally, then from this directory run:
+Use a clean virtual environment for Windows builds. The requirements pin one compatible PySide6 Essentials/shiboken6/Qt runtime set, preventing PyInstaller from collecting DLLs from different Qt releases. The release workflows use Python 3.12; locally, from this directory run:
 
 ```powershell
-py -3.12 -m pip install -r requirements.txt pytest
-py -3.12 -m pytest tests -q
-.\scripts\build_windows.ps1
+py -3.12 -m venv .venv-build
+.\.venv-build\Scripts\python.exe -m pip install -r requirements.txt pytest
+.\.venv-build\Scripts\python.exe -m pytest tests -q
+.\scripts\build_windows.ps1 -PythonExe .\.venv-build\Scripts\python.exe
 ```
 
 The onedir executable will be at `dist\MeluLauncher\MeluLauncher.exe`. Do not move only the EXE: keep its generated PyInstaller directory together.
+
+For an unmerged-branch test build only, the Windows script accepts an HTTPS manifest override without changing `config/settings.json`:
+
+```powershell
+.\scripts\build_windows.ps1 -ManifestUrl 'https://raw.githubusercontent.com/dheyab-binahmed/Launcher/codex/complete-windows-launcher/config/manifest.json'
+```
+
+The resulting ZIP is deliberately a testing artifact. Production builds retain the `main` raw-manifest URL in `config/settings.json`.
 
 ## Publishing a release
 
@@ -30,7 +39,7 @@ At startup, the launcher checks the manifest in a background worker. If `launche
 
 The replacement helper waits for the old process to exit before changing files. On Windows it validates and extracts the `MeluLauncher/` PyInstaller onedir ZIP (including `_internal`), moves the old installation to a uniquely named sibling backup, moves in the new directory, and starts `MeluLauncher.exe`. If moving or starting fails, it restores the backup. On macOS the helper uses `/usr/bin/ditto` after exit so the downloaded `.app` retains executable permissions and bundle metadata; it validates the app executable before replacing the old bundle and restores the backup on failure.
 
-The helper retains the backup after a successful handoff so a failed update remains recoverable. This code path is connected to the UI, but it will remain dormant until a real launcher ZIP and its immutable URL, byte size, and SHA-256 are placed in the manifest. It has not yet been exercised against a published launcher release or on a physical Mac.
+The helper retains the backup through the replacement startup check, restores it if replacement fails, and safely removes it after a successful handoff. This code path is connected to the UI, but it will remain dormant until a real launcher ZIP and its immutable URL, byte size, and SHA-256 are placed in the manifest. It has not yet been exercised against a published launcher release or on a physical Mac.
 
 ## Manifest rules
 

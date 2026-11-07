@@ -1,4 +1,5 @@
 import json
+import stat
 import zipfile
 from pathlib import Path
 
@@ -44,6 +45,23 @@ def test_windows_updater_rejects_incomplete_or_unsafe_archives(tmp_path: Path):
     with pytest.raises(InstallError, match="invalid"):
         LauncherUpdater()._extract_windows_archive(unsafe, tmp_path / "unsafe")
 
+    duplicate = tmp_path / "duplicate.zip"
+    with pytest.warns(UserWarning, match="Duplicate name"):
+        with zipfile.ZipFile(duplicate, "w") as bundle:
+            bundle.writestr("MeluLauncher/MeluLauncher.exe", b"one")
+            bundle.writestr("MeluLauncher/MeluLauncher.exe", b"two")
+    with pytest.raises(InstallError, match="invalid"):
+        LauncherUpdater()._extract_windows_archive(duplicate, tmp_path / "duplicate")
+
+    linked = tmp_path / "linked.zip"
+    link = zipfile.ZipInfo("MeluLauncher/link")
+    link.create_system = 3
+    link.external_attr = (stat.S_IFLNK | 0o777) << 16
+    with zipfile.ZipFile(linked, "w") as bundle:
+        bundle.writestr(link, "target")
+    with pytest.raises(InstallError, match="invalid"):
+        LauncherUpdater()._extract_windows_archive(linked, tmp_path / "linked")
+
 
 def test_windows_helper_waits_for_exit_and_restores_on_failure(tmp_path: Path):
     script = tmp_path / "replace.ps1"
@@ -52,7 +70,34 @@ def test_windows_helper_waits_for_exit_and_restores_on_failure(tmp_path: Path):
     assert "Wait-Process -Id 1234" in contents
     assert "Move-Item -LiteralPath $old -Destination $backup" in contents
     assert "Move-Item -LiteralPath $backup -Destination $old" in contents
-    assert "Start-Process -FilePath $executable" in contents
+    assert "Start-Process -FilePath $executable -PassThru" in contents
+    assert "$started.HasExited" in contents
+    assert "Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction Stop" in contents
+
+
+def test_windows_apply_stages_before_scheduling_the_handover(tmp_path: Path, monkeypatch):
+    archive = tmp_path / "update.zip"
+    archive.write_bytes(b"update")
+    current = tmp_path / "installed"
+    current.mkdir()
+    staged = tmp_path / "staged" / "MeluLauncher"
+    staged.mkdir(parents=True)
+    (staged / "MeluLauncher.exe").write_bytes(b"new")
+    (staged / "_internal").mkdir()
+    updater = LauncherUpdater()
+    recorded = {}
+    monkeypatch.setattr("core.updater.app_temp_root", lambda: tmp_path)
+    monkeypatch.setattr("core.updater.platform_key", lambda: "windows")
+    monkeypatch.setattr("core.updater.sys.executable", str(current / "MeluLauncher.exe"))
+    monkeypatch.setattr(updater, "_extract_windows_archive", lambda got, staging: recorded.setdefault("extracted", (got, staging)) and staged)
+    monkeypatch.setattr(updater, "_write_windows_helper", lambda script, old, new, pid: recorded.update(script=script, old=old, new=new, pid=pid))
+    monkeypatch.setattr("core.updater.subprocess.Popen", lambda args, **kwargs: recorded.update(command=args, popen=kwargs))
+    updater._apply_windows(archive)
+    assert recorded["extracted"][0] == archive
+    assert recorded["old"] == current
+    assert recorded["new"] == staged
+    assert recorded["script"].parent != current
+    assert recorded["command"][-1] == str(recorded["script"])
 
 
 def test_macos_helper_preserves_bundle_metadata_and_has_recovery(tmp_path: Path):
